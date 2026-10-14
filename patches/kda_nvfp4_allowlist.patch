@@ -1,0 +1,39 @@
+--- sglang/kernels/kda_kernels/qwen3x_nvfp4_gemm.py	2026-10-02 21:01:29.742750923 +0000
++++ sglang/kernels/kda_kernels/qwen3x_nvfp4_gemm.py	2026-10-14 08:31:39.688970982 +0000
+@@ -22,6 +22,23 @@
+ ).union({(9, 17408, 5120)})
+ 
+ 
++def _kdev_extra_shapes() -> frozenset:
++    """kdev 14-oct: extra (m, k, n) qualified on RTX PRO 6000 (SM120) for dense
++    Qwen3.x 27B MLPs (gate_up 5120->34816, down 17408->5120): KDA 85-89 % of DRAM
++    bandwidth vs flashinfer cutlass 50-70 %. Same kernel, the allowlist is the only
++    gate. SGLANG_KDEV_KDA_NVFP4_KN="KxN,KxN" (empty disables), _MAX_M (default 16)."""
++    import os
++
++    kn = os.environ.get("SGLANG_KDEV_KDA_NVFP4_KN", "5120x34816,17408x5120")
++    max_m = int(os.environ.get("SGLANG_KDEV_KDA_NVFP4_MAX_M", "16"))
++    pairs = [tuple(int(v) for v in p.lower().split("x")) for p in kn.split(",") if p.strip()]
++    return frozenset((m, k, n) for m in range(1, max_m + 1) for k, n in pairs)
++
++
++_SUPPORTED_SHAPES = _SUPPORTED_SHAPES | _kdev_extra_shapes()
++_LOGGED_SHAPES: set = set()
++
++
+ @functools.cache
+ def _has_runtime(device: torch.device) -> bool:
+     import torch
+@@ -110,6 +127,12 @@
+         _run_qwen3x_nvfp4_gemm,
+     )
+ 
++    shape = (input.shape[0], input.shape[1] * 2, int(out_features))
++    if shape not in _LOGGED_SHAPES:
++        _LOGGED_SHAPES.add(shape)
++        import logging
++
++        logging.getLogger(__name__).info("KDA NVFP4 SM120 path (m, k, n) = %s", shape)
+     assert input_sf is not None
+     return _run_qwen3x_nvfp4_gemm(input, weight, input_sf, weight_sf, alpha)
+ 
